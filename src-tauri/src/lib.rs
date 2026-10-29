@@ -1,6 +1,9 @@
+mod disks;
 mod gpu;
 #[cfg(windows)]
 mod gpu_win;
+#[cfg(windows)]
+mod nvapi;
 mod monitor;
 
 use monitor::Control;

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Proc, Snapshot } from "./types";
+import type { DiskInfo, NetInfo, Proc, Snapshot } from "./types";
 
 /** Samples kept per series. Ring buffers are mutated in place; only `state` changes identity. */
 export const HISTORY = 120;
@@ -16,11 +16,29 @@ export interface History {
   cores: number[][];
   gpu: number[][];
   vram: number[][];
+  /** Per-volume and per-interface history, keyed by mount point / interface name. */
+  vol: Record<string, Pair>;
+  net: Record<string, Pair>;
+}
+
+export interface Pair {
+  a: number[]; // read / receive
+  b: number[]; // write / send
+}
+
+/** Which volume, interface and GPU the Overview and Performance graphs show. */
+export interface Sel {
+  disk: string; // mount point, or "all"
+  net: string; // interface name, or "all"
+  gpu: number;
 }
 
 export interface State {
   snap: Snapshot | null;
   procs: Proc[];
+  disks: DiskInfo[];
+  nets: NetInfo[];
+  sel: Sel;
   hist: History;
   intervalMs: number;
 }
@@ -39,7 +57,10 @@ function loadInterval(): number {
 let state: State = {
   snap: null,
   procs: [],
-  hist: { cpu: [], mem: [], dr: [], dw: [], rx: [], tx: [], cores: [], gpu: [], vram: [] },
+  disks: [],
+  nets: [],
+  sel: { disk: "all", net: "all", gpu: 0, ...read<Partial<Sel>>("sel", {}) },
+  hist: { cpu: [], mem: [], dr: [], dw: [], rx: [], tx: [], cores: [], gpu: [], vram: [], vol: {}, net: {} },
   intervalMs: loadInterval(),
 };
 
@@ -64,7 +85,17 @@ function ingest(s: Snapshot) {
     push((h.gpu[i] ??= []), g.u);
     push((h.vram[i] ??= []), g.mt ? (g.mu / g.mt) * 100 : 0);
   });
-  state = { ...state, snap: s, procs: s.procs ?? state.procs };
+  for (const d of s.disks) {
+    const p = (h.vol[d.m] ??= { a: [], b: [] });
+    push(p.a, d.r);
+    push(p.b, d.w);
+  }
+  for (const n of s.nets) {
+    const p = (h.net[n.n] ??= { a: [], b: [] });
+    push(p.a, n.rx);
+    push(p.b, n.tx);
+  }
+  state = { ...state, snap: s, procs: s.procs ?? state.procs, disks: s.disks, nets: s.nets };
   emit();
 }
 
@@ -101,6 +132,12 @@ export function write(key: string, value: unknown) {
   } catch {
     /* storage unavailable: setting just won't persist */
   }
+}
+
+export function choose<K extends keyof Sel>(key: K, value: Sel[K]) {
+  state = { ...state, sel: { ...state.sel, [key]: value } };
+  write("sel", state.sel);
+  emit();
 }
 
 export function changeInterval(ms: number) {

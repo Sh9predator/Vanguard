@@ -29,6 +29,9 @@ pub struct GpuSampler {
     amd: Vec<std::path::PathBuf>,
     #[cfg(windows)]
     win: Option<crate::gpu_win::WinGpus>,
+    /// Second opinion for temperatures NVML won't give (some laptop GPUs).
+    #[cfg(windows)]
+    nvapi: Option<crate::nvapi::Nvapi>,
 }
 
 impl GpuSampler {
@@ -41,6 +44,8 @@ impl GpuSampler {
             let nvidia_covered = nvml.as_ref().map_or(0, |n| n.device_count().unwrap_or(0)) > 0;
             crate::gpu_win::WinGpus::new(nvidia_covered)
         };
+        #[cfg(windows)]
+        let nvapi = if nvml.is_some() { crate::nvapi::Nvapi::new() } else { None };
 
         Self {
             nvml,
@@ -48,6 +53,8 @@ impl GpuSampler {
             amd: amd_cards(),
             #[cfg(windows)]
             win,
+            #[cfg(windows)]
+            nvapi,
         }
     }
 
@@ -61,14 +68,28 @@ impl GpuSampler {
                 let (Ok(mem), Ok(util)) = (dev.memory_info(), dev.utilization_rates()) else {
                     continue;
                 };
+                let name = dev.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}"));
+                // Some drivers answer 0 through NVML for mobile GPUs. That is "no
+                // reading", not a real 0 degrees, so fall through to NVAPI.
+                #[allow(unused_mut)]
+                let mut t = dev
+                    .temperature(TemperatureSensor::Gpu)
+                    .ok()
+                    .filter(|&t| t > 0 && t < 150);
+                #[cfg(windows)]
+                if t.is_none() {
+                    if let Some(api) = &self.nvapi {
+                        t = api.temperature(&name, i as usize);
+                    }
+                }
                 out.push((
                     mem.total,
                     Gpu {
-                        n: dev.name().unwrap_or_else(|_| format!("NVIDIA GPU {i}")),
+                        n: name,
                         u: util.gpu as f32,
                         mu: mem.used,
                         mt: mem.total,
-                        t: dev.temperature(TemperatureSensor::Gpu).ok(),
+                        t,
                     },
                 ));
             }

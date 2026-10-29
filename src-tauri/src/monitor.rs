@@ -1,6 +1,7 @@
 //! Background sampler. One thread, parked whenever the window is hidden or
 //! minimised, so an idle Vanguard costs essentially nothing.
 
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, Thread};
@@ -12,7 +13,10 @@ use sysinfo::{
     ProcessesToUpdate, RefreshKind, Signal, System,
 };
 use tauri::{AppHandle, Emitter};
+#[cfg(not(windows))]
+use sysinfo::Components;
 
+use crate::disks::{self, DiskInfo};
 use crate::gpu::{Gpu, GpuSampler};
 
 /// sysinfo needs a gap between CPU refreshes to produce meaningful numbers.
@@ -30,7 +34,22 @@ pub struct Proc {
     s: String,
 }
 
+/// n=interface, rx/tx=bytes per second, trx/ttx=bytes since boot, mac, ip=addresses.
+#[derive(Serialize)]
+pub struct NetInfo {
+    n: String,
+    rx: u64,
+    tx: u64,
+    trx: u64,
+    ttx: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    mac: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ip: Vec<String>,
+}
+
 /// cpu/cores in %, mu/mt = RAM used/total, su/st = swap, dr/dw = disk B/s, rx/tx = net B/s.
+/// `procs` is sent only while the Processes tab is open.
 #[derive(Serialize)]
 pub struct Snapshot {
     cpu: f32,
@@ -44,12 +63,24 @@ pub struct Snapshot {
     rx: u64,
     tx: u64,
     gpus: Vec<Gpu>,
+    /// CPU temperature in C. Linux and macOS only; Windows has no unprivileged source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ct: Option<f32>,
+    disks: Vec<DiskInfo>,
+    nets: Vec<NetInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     procs: Option<Vec<Proc>>,
 }
 
 fn r1(v: f32) -> f32 {
     (v * 10.0).round() / 10.0
+}
+
+fn link_local(a: &IpAddr) -> bool {
+    match a {
+        IpAddr::V4(v) => v.is_link_local(),
+        IpAddr::V6(v) => (v.segments()[0] & 0xffc0) == 0xfe80,
+    }
 }
 
 // ---------------------------------------------------------------- control
@@ -108,7 +139,10 @@ struct Sampler {
     disks: Disks,
     nets: Networks,
     gpu: GpuSampler,
+    #[cfg(not(windows))]
+    temps: Components,
     last: Instant,
+    tick: u64,
 }
 
 fn cpu_kind() -> CpuRefreshKind {
@@ -131,15 +165,22 @@ impl Sampler {
             disks: Disks::new_with_refreshed_list(),
             nets: Networks::new_with_refreshed_list(),
             gpu: GpuSampler::new(),
+            #[cfg(not(windows))]
+            temps: Components::new_with_refreshed_list(),
             last: Instant::now(),
+            tick: 0,
         }
     }
 
     fn refresh(&mut self, procs: bool) {
         self.sys.refresh_cpu_specifics(cpu_kind());
         self.sys.refresh_memory_specifics(mem_kind());
-        self.disks.refresh(false);
+        disks::refresh(&mut self.disks, self.tick);
         self.nets.refresh(false);
+        #[cfg(not(windows))]
+        for c in self.temps.list_mut() {
+            c.refresh();
+        }
         if procs {
             self.sys
                 .refresh_processes_specifics(ProcessesToUpdate::All, true, proc_kind());
@@ -147,37 +188,83 @@ impl Sampler {
         self.last = Instant::now();
     }
 
+    /// Hottest sensor that looks like a CPU one (package, die, core).
+    fn cpu_temp(&self) -> Option<f32> {
+        #[cfg(not(windows))]
+        {
+            let mut best: Option<f32> = None;
+            for c in self.temps.list() {
+                let label = c.label().to_lowercase();
+                let cpu_like = ["package", "tctl", "tdie", "cpu", "coretemp", "k10temp", "core "]
+                    .iter()
+                    .any(|k| label.contains(k));
+                if let (true, Some(t)) = (cpu_like, c.temperature()) {
+                    if t.is_finite() && t > 0.0 && t < 150.0 {
+                        best = Some(best.map_or(t, |b| b.max(t)));
+                    }
+                }
+            }
+            best.map(r1)
+        }
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
+    /// Totals across real interfaces, plus the per-interface list.
+    fn network(&self, dt: f64) -> (u64, u64, Vec<NetInfo>) {
+        let (mut rx, mut tx) = (0u64, 0u64);
+        let mut list = Vec::new();
+
+        for (name, n) in &self.nets {
+            if name == "lo" || name == "lo0" || name.starts_with("Loopback") {
+                continue;
+            }
+            let (r, t) = (n.received(), n.transmitted());
+            rx += r;
+            tx += t;
+
+            let ip: Vec<String> = n
+                .ip_networks()
+                .iter()
+                .map(|i| i.addr)
+                .filter(|a| !link_local(a))
+                .map(|a| a.to_string())
+                .collect();
+            // Hide adapters that have never carried traffic and have no address.
+            if n.total_received() + n.total_transmitted() == 0 && ip.is_empty() {
+                continue;
+            }
+            let mac = n.mac_address().to_string();
+            list.push(NetInfo {
+                n: name.clone(),
+                rx: (r as f64 / dt) as u64,
+                tx: (t as f64 / dt) as u64,
+                trx: n.total_received(),
+                ttx: n.total_transmitted(),
+                mac: if mac == "00:00:00:00:00:00" { String::new() } else { mac },
+                ip,
+            });
+        }
+
+        list.sort_by(|a, b| a.n.cmp(&b.n)); // stable order: rows must not jump around
+        ((rx as f64 / dt) as u64, (tx as f64 / dt) as u64, list)
+    }
+
     fn sample(&mut self, procs: bool) -> Snapshot {
         if let Some(rest) = MIN_GAP.checked_sub(self.last.elapsed()) {
             thread::sleep(rest);
         }
         let dt = self.last.elapsed().as_secs_f64().max(0.001);
+        self.tick += 1;
         self.refresh(procs);
 
-        // Disks: count each physical device once (btrfs subvolumes etc. repeat names).
-        let (mut dr, mut dw) = (0u64, 0u64);
-        let mut seen = Vec::new();
-        for d in self.disks.list() {
-            if seen.contains(&d.name()) {
-                continue;
-            }
-            seen.push(d.name());
-            let u = d.usage();
-            dr += u.read_bytes;
-            dw += u.written_bytes;
-        }
-
-        let (mut rx, mut tx) = (0u64, 0u64);
-        for (name, n) in &self.nets {
-            if name == "lo" || name.starts_with("Loopback") {
-                continue;
-            }
-            rx += n.received();
-            tx += n.transmitted();
-        }
+        let (dr, dw, disk_list) = disks::collect(&self.disks, dt);
+        let (rx, tx, net_list) = self.network(dt);
 
         let ncpu = self.sys.cpus().len().max(1) as f32;
-        let procs = procs.then(|| {
+        let proc_list = procs.then(|| {
             self.sys
                 .processes()
                 .iter()
@@ -199,12 +286,15 @@ impl Sampler {
             mt: self.sys.total_memory(),
             su: self.sys.used_swap(),
             st: self.sys.total_swap(),
-            dr: (dr as f64 / dt) as u64,
-            dw: (dw as f64 / dt) as u64,
-            rx: (rx as f64 / dt) as u64,
-            tx: (tx as f64 / dt) as u64,
+            dr,
+            dw,
+            rx,
+            tx,
             gpus: self.gpu.sample(),
-            procs,
+            ct: self.cpu_temp(),
+            disks: disk_list,
+            nets: net_list,
+            procs: proc_list,
         }
     }
 }

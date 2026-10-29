@@ -113,3 +113,26 @@ button, select, input { font: inherit; color: inherit; }
 .ctx button:hover { background: var(--accent-strong); color: #fff; }
 .ctx .sep { height: 1px; margin: 3px 0; background: var(--line); }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- volumes, tables ---- */
+.vols { display: flex; flex-direction: column; gap: 4px; max-height: 56px; overflow: auto; flex: none; }
+.vol { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 8px; }
+.vol .num { white-space: nowrap; }
+.vol .vn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail h3 { font-size: 12px; font-weight: 600; flex: none; margin-top: 4px; }
+.tbl { border: 1px solid var(--line); flex: none; }
+.tr { display: grid; grid-template-columns: var(--cols); gap: 12px; align-items: center; padding: 6px 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.tr:last-child { border-bottom: 0; }
+.tr.th { background: var(--panel); color: var(--muted); }
+.tr > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr .num { text-align: right; }
+
+/* ---- pickers and selectable rows ---- */
+.ttl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pick { max-width: 190px; background: var(--raised); border: 1px solid var(--line); padding: 0 4px; font-size: 11px; }
+.pick:focus { outline: none; border-color: var(--accent); }
+.vol { cursor: pointer; }
+.vol.on .vn { color: var(--accent); }
+.tr.click { cursor: pointer; }
+.tr.click:hover { background: var(--panel); }
+.tr.on { box-shadow: inset 2px 0 0 var(--accent); background: var(--raised); }

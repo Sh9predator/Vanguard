@@ -80,7 +80,7 @@ const PDH_FMT_DOUBLE: u32 = 0x200;
 
 struct Pdh {
     query: isize,
-    engine: isize,
+    engines: [isize; 2],
     dedicated: isize,
     shared: isize,
 }
@@ -97,8 +97,12 @@ impl Pdh {
                 let mut counter = 0isize;
                 (PdhAddEnglishCounterW(query, wide.as_ptr(), 0, &mut counter) == 0).then_some(counter)
             };
-            let (Some(engine), Some(dedicated), Some(shared)) = (
-                add(r"\GPU Engine(*)\Utilization Percentage"),
+            // Only the 3D and Compute engines: that is what the overall GPU figure is
+            // made of, and it keeps the number of counter instances (one per process
+            // per engine) far lower than a plain (*) wildcard.
+            let (Some(e3d), Some(compute), Some(dedicated), Some(shared)) = (
+                add(r"\GPU Engine(*engtype_3D)\Utilization Percentage"),
+                add(r"\GPU Engine(*engtype_Compute)\Utilization Percentage"),
                 add(r"\GPU Adapter Memory(*)\Dedicated Usage"),
                 add(r"\GPU Adapter Memory(*)\Shared Usage"),
             ) else {
@@ -107,7 +111,7 @@ impl Pdh {
             };
             // Rate counters need a first collection before they can report anything.
             PdhCollectQueryData(query);
-            Some(Self { query, engine, dedicated, shared })
+            Some(Self { query, engines: [e3d, compute], dedicated, shared })
         }
     }
 }
@@ -195,11 +199,13 @@ impl WinGpus {
 
         // Utilisation: sum processes per engine type, then take the busiest engine type.
         let mut per_engine: HashMap<(Luid, String), f64> = HashMap::new();
-        for (name, v) in read(self.pdh.engine) {
-            let (Some(luid), Some((_, kind))) = (parse_luid(&name), name.split_once("engtype_")) else {
-                continue;
-            };
-            *per_engine.entry((luid, kind.to_owned())).or_insert(0.0) += v;
+        for counter in self.pdh.engines {
+            for (name, v) in read(counter) {
+                let (Some(luid), Some((_, kind))) = (parse_luid(&name), name.split_once("engtype_")) else {
+                    continue;
+                };
+                *per_engine.entry((luid, kind.to_owned())).or_insert(0.0) += v;
+            }
         }
         let mut busy: HashMap<Luid, f64> = HashMap::new();
         for ((luid, _), v) in per_engine {

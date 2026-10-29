@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { HISTORY } from "../store";
 
 export interface Series {
   data: number[];
@@ -44,7 +43,7 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
       c.width = Math.round(W * dpr);
       c.height = Math.round(H * dpr);
     }
-    const g = c.getContext("2d")!;
+    const g = c.getContext("2d", { willReadFrequently: true })!;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
 
@@ -61,10 +60,10 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
     }
     g.stroke();
 
-    const step = W / (HISTORY - 1);
     for (const s of series) {
       const n = s.data.length;
       if (n < 2) continue;
+      const step = W / (n - 1); // oldest sample at x=0, newest at x=W; nothing invented
       g.beginPath();
       s.data.forEach((v, i) => {
         const x = i * step;
@@ -76,7 +75,7 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
       g.lineWidth = 1.25;
       g.stroke();
       if (s.fill) {
-        g.lineTo((n - 1) * step, H);
+        g.lineTo(W, H);
         g.lineTo(0, H);
         g.closePath();
         g.fillStyle = s.color + "1F";

@@ -15,19 +15,23 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            bundles: appimage
+            args: --bundles appimage
           - os: windows-latest
-            bundles: nsis
+            args: --bundles nsis
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles dmg
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: node
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -40,8 +44,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev patchelf
 
-      # Switch to `npm ci` once package-lock.json is committed.
-      - run: npm install
+      - run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -50,11 +53,11 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Vanguard ${{ github.ref_name }}
           releaseDraft: true
-          args: --bundles ${{ matrix.bundles }}
+          args: ${{ matrix.args }}
 
       - name: Keep the portable .exe too
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: vanguard-windows-portable
           path: src-tauri/target/release/vanguard.exe
