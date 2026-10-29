@@ -13,6 +13,8 @@ use sysinfo::{
 };
 use tauri::{AppHandle, Emitter};
 
+use crate::gpu::{Gpu, GpuSampler};
+
 /// sysinfo needs a gap between CPU refreshes to produce meaningful numbers.
 const MIN_GAP: Duration = Duration::from_millis(250);
 
@@ -41,6 +43,7 @@ pub struct Snapshot {
     dw: u64,
     rx: u64,
     tx: u64,
+    gpus: Vec<Gpu>,
     #[serde(skip_serializing_if = "Option::is_none")]
     procs: Option<Vec<Proc>>,
 }
@@ -104,6 +107,7 @@ struct Sampler {
     sys: System,
     disks: Disks,
     nets: Networks,
+    gpu: GpuSampler,
     last: Instant,
 }
 
@@ -126,6 +130,7 @@ impl Sampler {
             sys,
             disks: Disks::new_with_refreshed_list(),
             nets: Networks::new_with_refreshed_list(),
+            gpu: GpuSampler::new(),
             last: Instant::now(),
         }
     }
@@ -198,6 +203,7 @@ impl Sampler {
             dw: (dw as f64 / dt) as u64,
             rx: (rx as f64 / dt) as u64,
             tx: (tx as f64 / dt) as u64,
+            gpus: self.gpu.sample(),
             procs,
         }
     }

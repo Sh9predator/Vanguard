@@ -14,6 +14,8 @@ export interface History {
   rx: number[];
   tx: number[];
   cores: number[][];
+  gpu: number[][];
+  vram: number[][];
 }
 
 export interface State {
@@ -37,7 +39,7 @@ function loadInterval(): number {
 let state: State = {
   snap: null,
   procs: [],
-  hist: { cpu: [], mem: [], dr: [], dw: [], rx: [], tx: [], cores: [] },
+  hist: { cpu: [], mem: [], dr: [], dw: [], rx: [], tx: [], cores: [], gpu: [], vram: [] },
   intervalMs: loadInterval(),
 };
 
@@ -58,6 +60,10 @@ function ingest(s: Snapshot) {
   push(h.rx, s.rx);
   push(h.tx, s.tx);
   s.cores.forEach((v, i) => push((h.cores[i] ??= []), v));
+  s.gpus.forEach((g, i) => {
+    push((h.gpu[i] ??= []), g.u);
+    push((h.vram[i] ??= []), g.mt ? (g.mu / g.mt) * 100 : 0);
+  });
   state = { ...state, snap: s, procs: s.procs ?? state.procs };
   emit();
 }

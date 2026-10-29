@@ -16,6 +16,8 @@ interface Props {
   fmt?: (v: number) => string;
   /** Pixel height. Omit to fill the parent flex container. */
   height?: number;
+  /** Smallest height when filling the parent. */
+  minHeight?: number;
   label?: boolean;
 }
 
@@ -26,7 +28,7 @@ function niceMax(v: number): number {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e;
 }
 
-export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math.round(v)), height, label = true }: Props) {
+export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math.round(v)), height, minHeight = 48, label = true }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
 
@@ -65,7 +67,7 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
       if (n < 2) continue;
       g.beginPath();
       s.data.forEach((v, i) => {
-        const x = W - (n - 1 - i) * step;
+        const x = i * step;
         const y = H - 1 - Math.min(v / top, 1) * (H - 2);
         if (i) g.lineTo(x, y);
         else g.moveTo(x, y);
@@ -74,8 +76,8 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
       g.lineWidth = 1.25;
       g.stroke();
       if (s.fill) {
-        g.lineTo(W, H);
-        g.lineTo(W - (n - 1) * step, H);
+        g.lineTo((n - 1) * step, H);
+        g.lineTo(0, H);
         g.closePath();
         g.fillStyle = s.color + "1F";
         g.fill();
@@ -101,7 +103,7 @@ export default function Graph({ series, max, floor = 1, fmt = (v) => String(Math
   useEffect(draw); // redraw after every render; renders only happen per sample
 
   return (
-    <div ref={wrap} className="graph" style={height ? { height } : { flex: 1, minHeight: 48 }}>
+    <div ref={wrap} className="graph" style={height ? { height } : { flex: 1, minHeight }}>
       <canvas ref={cv} />
     </div>
   );

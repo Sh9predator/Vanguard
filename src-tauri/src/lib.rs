@@ -1,3 +1,6 @@
+mod gpu;
+#[cfg(windows)]
+mod gpu_win;
 mod monitor;
 
 use monitor::Control;

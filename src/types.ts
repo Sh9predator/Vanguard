@@ -6,6 +6,14 @@ export interface Proc {
   s: string; // status
 }
 
+export interface Gpu {
+  n: string; // name
+  u: number; // utilisation %
+  mu: number; // VRAM used, bytes
+  mt: number; // VRAM total, bytes
+  t?: number; // temperature in C, when the driver reports it
+}
+
 export interface Snapshot {
   cpu: number;
   cores: number[];
@@ -17,5 +25,6 @@ export interface Snapshot {
   dw: number;
   rx: number;
   tx: number;
+  gpus: Gpu[];
   procs?: Proc[];
 }

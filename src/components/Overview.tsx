@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { bytes, pct, rate } from "../format";
 import { useStore } from "../store";
+import type { Gpu } from "../types";
 import Graph from "./Graph";
 
 export const ACCENT = "#8B5CF6";
@@ -40,6 +41,7 @@ export default function Overview() {
   const { snap, hist } = useStore();
   if (!snap) return <div className="empty">Waiting for first sample</div>;
   const memPct = snap.mt ? (snap.mu / snap.mt) * 100 : 0;
+  const gpu: Gpu | undefined = snap.gpus[0];
 
   return (
     <div className="overview">
@@ -56,7 +58,7 @@ export default function Overview() {
         </div>
       </Panel>
 
-      <div className="col">
+      <div className="col" style={{ gridTemplateRows: `repeat(${gpu ? 4 : 3}, minmax(0, 1fr))` }}>
         <Panel title="Memory" value={`${bytes(snap.mu)} of ${bytes(snap.mt)}`}>
           <Bar value={memPct} />
           <div className="keys">
@@ -65,6 +67,19 @@ export default function Overview() {
           </div>
           <Graph series={[{ data: hist.mem, color: ACCENT, fill: true }]} max={100} fmt={(v) => `${v}%`} />
         </Panel>
+
+        {gpu && (
+          <Panel title="GPU" value={pct(gpu.u, 0)}>
+            <div className="dim ellipsis" title={gpu.n}>
+              {gpu.n}
+            </div>
+            <div className="keys">
+              <Key color={ACCENT} label="Memory" value={`${bytes(gpu.mu)} of ${bytes(gpu.mt)}`} />
+              {gpu.t !== undefined && <Key color={MUTED} label="Temp" value={`${gpu.t} \u00B0C`} />}
+            </div>
+            <Graph series={[{ data: hist.gpu[0] ?? [], color: ACCENT, fill: true }]} max={100} fmt={(v) => `${v}%`} />
+          </Panel>
+        )}
 
         <Panel title="Disk">
           <div className="keys">
